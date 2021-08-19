@@ -6,6 +6,39 @@
 #include "casadi_wrapper.hpp"
 
 using namespace std;
+Eigen::MatrixXd skewMat(const Eigen::VectorXd &v){
+    Eigen::Matrix3d s;
+    s << 0, -v[2], v[1],
+        v[2], 0, -v[0],
+        -v[1], v[0], 0;
+    return s;
+}
+
+Eigen::Matrix3d zyx2R(const Eigen::VectorXd &v){ //euler to rotation matrix
+    float c_x = cos(v[2]);
+    float s_x = sin(v[2]);
+    float c_y = cos(v[1]);
+    float s_y = sin(v[1]);
+    float c_z = cos(v[0]);
+    float s_z = sin(v[0]);
+  
+    Eigen::Matrix3d rot_z, rot_y, rot_x, R;
+    rot_z << c_z, -s_z, 0,
+            s_z, c_z, 0,
+            0, 0, 1;
+
+    rot_y << c_y, 0, s_y,
+            0, 1, 0,
+            -s_y, 0, c_y;
+
+    rot_x << 1, 0, 0,
+            0, c_x, -s_x,
+            0, s_x, c_x;
+
+    R << rot_z*rot_y*rot_x;
+    return R;       
+}
+
 int main()
 {  
 
@@ -22,7 +55,7 @@ int main()
     size.nbgN = 0;
     size.N = 40;
     size.nbx_idx = new int[size.nbx];   
-    int i;         
+    int i, j;         
     for(i=0;i<size.nbx;i++)
         size.nbx_idx[i]=i;
     
@@ -30,20 +63,64 @@ int main()
     rti_step_workspace rti_work(size);
 
     // initial condition and parameters
-    rti_work.x0(1) = M_PI;
+    // read ref from txt file
+    int nrows = 251; int ncols = 45;
+    MatrixXd ref = MatrixXd::Zero(nrows,ncols);
+    ifstream fin ("./ref.txt");
 
-    for(i=0;i<size.N+1;i++){
-        rti_work.QP.in.x(1,i) = M_PI;
+    if (fin.is_open())
+    {
+        for (int row = 0; row < nrows; row++)
+            for (int col = 0; col < ncols; col++)
+            {
+                float item = 0.0;
+                fin >> item;
+                ref(row, col) = item;
+            }
+        fin.close();
+    }
+    else
+        cout << "ref file not opened" << endl;
+
+    /*ofstream myfile2;
+    myfile2.open ("ref2.txt");
+    myfile2 << ref.transpose() << endl;*/
+    for(i=0;i<size.nx;i++)
+        rti_work.x0(i) = ref(0,i);
+    for(i=0;i<size.nx;i++){
+        for(j=0;j<size.N+1;j++){
+            rti_work.QP.in.x(i,j) = ref(0,i);
+        }
     }
 
     // ref
-    for(i=0;i<size.N;i++){
-        rti_work.QP.in.y(0,i) = 0.3;
+    for(i=0;i<size.ny;i++){
+        for(j=0;j<size.N;j++){
+            rti_work.QP.in.y(i,j) = ref(j,i);
+        }
+    } 
+    for(i=0;i<size.nyN;i++){
+        rti_work.QP.in.yN(i) = ref(size.N,i);
     } 
 
     // parameters
-    for(i=0;i<size.N+1;i++){
-        rti_work.QP.in.p(0,i) = 0.3;
+    MatrixXd M_ = MatrixXd::Zero(6,6);
+    M_.block(0,0,3,3) = 0.5*MatrixXd::Identity(3,3);
+    M_.block(3,3,3,3) = 1e-4*MatrixXd::Identity(3,3);
+    MatrixXd C_ = MatrixXd::Zero(6,6);
+    C_.block(0,0,3,3) = skewMat(rti_work.x0.segment(9,3))*M_(0,0);
+    C_.block(3,3,3,3) = skewMat(rti_work.x0.segment(9,3))*M_.block(3,3,3,3);
+    VectorXd N_(6), gVec(3);
+    gVec << 0,0,9.8;
+    N_ << M_(0,0)*zyx2R(rti_work.x0.segment(3,3))*gVec, 0.0, 0.0, 0.0;
+    Eigen::VectorXd pVEC(size.np);
+    pVEC << (Eigen::Map<Eigen::VectorXd>(M_.data(), M_.cols()*M_.rows())),
+            (Eigen::Map<Eigen::VectorXd>(C_.data(), C_.cols()*C_.rows())),
+            N_;
+    for(i=0;i<size.np;i++){
+        for(j=0;j<size.N;j++){
+            rti_work.QP.in.p(i,j) = pVEC(i);
+        }
     } 
 
     // weight matrix
@@ -125,6 +202,7 @@ int main()
     myfile.open ("data.txt");
 
     // start the simulation
+    int n_iter = 0;
     while(t<Tf){
         
         // call RTI solving routine
@@ -151,6 +229,35 @@ int main()
         }
         rti_work.QP.in.x.col(size.N-1) = rti_work.QP.in.x.col(size.N);   
 
+        // update parameters
+        C_.block(0,0,3,3) = skewMat(rti_work.x0.segment(9,3))*M_(0,0);
+        C_.block(3,3,3,3) = skewMat(rti_work.x0.segment(9,3))*M_.block(3,3,3,3);
+        N_ << M_(0,0)*zyx2R(rti_work.x0.segment(3,3))*gVec, 0.0, 0.0, 0.0;
+        pVEC << (Eigen::Map<Eigen::VectorXd>(M_.data(), M_.cols()*M_.rows())),
+                (Eigen::Map<Eigen::VectorXd>(C_.data(), C_.cols()*C_.rows())),
+                N_;
+        for(i=0;i<size.np;i++){
+            for(j=0;j<size.N;j++){
+                rti_work.QP.in.p(i,j) = pVEC(i);
+            }
+        }
+
+        // update ref
+        for(i=0;i<size.ny;i++){
+            for(j=0;j<size.N;j++){
+                if(j+n_iter+1 > 251)
+                    rti_work.QP.in.y(i,j) = ref(251,i);
+                else
+                    rti_work.QP.in.y(i,j) = ref(j+n_iter+1,i);
+            }
+        } 
+        for(i=0;i<size.nyN;i++){
+            if(n_iter+1+size.N > 251)
+                rti_work.QP.in.yN(i) = ref(251,i);
+            else
+                rti_work.QP.in.yN(i) = ref(n_iter+size.N+1,i);
+        }
+        n_iter++;
     }
 
     // free memory

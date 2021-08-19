@@ -1,14 +1,19 @@
 include ../make.mk
 
 IFLAGS = -I$(CPPMPC_HEADER) \
-	     -I$(QPOASES_HEADER)
+	     -I$(QPOASES_HEADER) \
+	     -I/usr/include/eigen3
 
-OBJ += InvertedPendulum.o
+# OBJ += InvertedPendulum.o
 
-OUT_STATIC += InvertedPendulum_s.exe
+# OUT_STATIC += InvertedPendulum_s.exe
 
-OUT_DYNAMIC += InvertedPendulum_d.exe
+# OUT_DYNAMIC += InvertedPendulum_d.exe
+OBJ += object.o
 
+OUT_STATIC += object_s.exe
+
+OUT_DYNAMIC += object_d.exe
 all: $(OUT_STATIC) $(OUT_DYNAMIC)
 
 $(OUT_DYNAMIC): $(OBJ)

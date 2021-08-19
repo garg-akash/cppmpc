@@ -2,7 +2,8 @@ include ../make.mk
 
 IFLAGS = -I$(CPPMPC_HEADER) \
 	     -I$(QPOASES_HEADER) \
-		 -I$(MODEL_HEADER)
+		 -I$(MODEL_HEADER) \
+		 -I/usr/include/eigen3
 
 MKDIR_P = mkdir -p
 
